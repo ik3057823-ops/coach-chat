@@ -22,7 +22,7 @@
   .btn{appearance:none;border:1px solid var(--soft-2);background:#fff;color:#111827;padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}
   .btn.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
   .footer{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-top:1px solid var(--soft-2);background:#fff}
-  .hint{font-size:12px;color:var(--ink-dim)}
+  .hint{font-size:12px;color:#6b7280}
   .pill{font-size:12px;color:#fff;background:#0ea5e9;border-radius:999px;padding:4px 8px}
   .score{font-size:13px;color:#6b7280}
   .center{display:flex;gap:12px;justify-content:center;align-items:center}
@@ -70,7 +70,7 @@
 </div>
 
 <script>
-/* 1) Point to your Vercel API (backend is already live) */
+/* 1) Backend URL */
 const AI_API_URL = "https://coach-backend1.vercel.app/api/coach";
 
 /* 2) Word list */
@@ -98,13 +98,13 @@ let queue=[], wrongQueue=[], cur=null, task=null;
 let stats={correct:0, wrong:0}, history=[];
 const $=s=>document.querySelector(s);
 const app=$("#app"), results=$("#results"), chat=$("#chat");
-const msgInput=$("#msg"), progress=$("#progress"), score=$("#score"), hintEl=$("#hint");
+const msg=$("#msg"), progress=$("#progress"), score=$("#score"), hint=$("#hint");
 
 /* 4) Helpers */
 function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 function bubble(sender,text){ const b=document.createElement("div"); b.className="bubble "+(sender==="bot"?"bot":"user"); b.textContent=text; chat.appendChild(b); chat.scrollTop=chat.scrollHeight; }
 
-/* 5) Call your backend (which talks to OpenAI) */
+/* 5) API */
 async function callAI({task,item,user_input,history}){
   const payload={
     system: `
@@ -128,14 +128,14 @@ Tasks:
 
 /* 6) Flow */
 function setProgress(){
-  const remaining = queue.length + (cur!==null?1:0);
-  progress.textContent = `${WORDS.length - remaining + 1} / ${WORDS.length}`;
+  const completed = (WORDS.length - (queue.length + (cur!==null?1:0)));
+  progress.textContent = `${Math.max(completed,0)} / ${WORDS.length}`;
   score.textContent = `Correct: ${stats.correct} • To review: ${wrongQueue.length}`;
 }
 function presentTask(){
   const item=WORDS[cur];
-  if(task==="sentence"){ bubble("bot",`Use “${item.word}” in a natural sentence.`); hintEl.textContent="Tip: mention the word directly in your sentence."; }
-  else{ bubble("bot",`Which word matches this definition?\n“${item.def}”`); hintEl.textContent="Tip: answer with just the word/phrase."; }
+  if(task==="sentence"){ bubble("bot",`Use “${item.word}” in a natural sentence.`); hint.textContent="Tip: mention the word directly in your sentence."; }
+  else{ bubble("bot",`Which word matches this definition?\n“${item.def}”`); hint.textContent="Tip: answer with just the word/phrase."; }
 }
 function nextItem(){
   if(queue.length===0){ endSession(); return; }
@@ -151,4 +151,35 @@ function startSession(onlyWrong=false){
   results.classList.add("hidden"); app.classList.remove("hidden"); chat.innerHTML="";
   stats={correct:0,wrong:0}; wrongQueue=[]; history=[];
   const all = WORDS.map((_,i)=>i);
-  queue = onlyWrong ? (window.__lastWrong?.l
+  queue = onlyWrong ? (window.__lastWrong?.length ? window.__lastWrong.slice() : all.slice()) : shuffle(all);
+  cur=null; setProgress();
+  bubble("bot","Hi! I’m your coach. Let’s practice these words in a quick chat. Ready?");
+  setTimeout(nextItem,500);
+}
+
+/* 7) Handlers */
+async function onSend(){
+  const text=msg.value.trim(); if(!text) return;
+  msg.value=""; bubble("user",text); history.push({role:"user",content:text});
+  try{
+    const item=WORDS[cur];
+    const result=await callAI({task,item,user_input:text,history});
+    bubble("bot",result.assistant); history.push({role:"assistant",content:result.assistant});
+    if(result.verdict==="correct") stats.correct++; else { stats.wrong++; wrongQueue.push(cur); }
+    cur=null; setProgress(); setTimeout(nextItem,800);
+  }catch(e){
+    console.error(e); bubble("bot","⚠️ Couldn’t reach the coach just now. Please try again.");
+  }
+}
+$("#sendBtn").addEventListener("click", onSend);
+msg.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); onSend(); } });
+
+/* 8) Session controls on results screen */
+$("#reviewWrongBtn").addEventListener("click", ()=> startSession(true));
+$("#restartBtn").addEventListener("click", ()=> startSession(false));
+
+/* 9) Init */
+startSession();
+</script>
+</body>
+</html>
