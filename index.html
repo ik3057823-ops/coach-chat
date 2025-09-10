@@ -114,28 +114,26 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 
-  async function callAI({task,item,user_input,history}){
-    const payload = {
-      system: [
-        "You are a friendly ESL vocabulary coach. Be concise and supportive.",
-        "Return strict JSON only: {\"assistant\":\"...\",\"verdict\":\"correct|incorrect|unsure\",\"explanation\":\"...\"}.",
-        "If incorrect/unsure: give one small hint and end with a short follow-up question inviting another try."
-      ].join("\n"),
-      task,
-      target: item.word,
-      definition: item.def,
-      alternatives: item.alt || [],
-      user_input,
-      history: history.slice(-6)
-    };
-    const res = await fetch(AI_API_URL, {
-      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload)
-    });
-    if(!res.ok) throw new Error("API error: "+res.status);
-    const data = await res.json();
-    if(!data || !data.verdict || !data.assistant) throw new Error("Malformed response from API");
-    return data;
-  }
+  async function callAI({task, item, user_input, history}){
+  const payload = {
+    task,
+    target: item.word,
+    definition: item.def,
+    alternatives: item.alt || [],   // send variants
+    user_input,
+    history: history.slice(-6),
+    meta: { style: ["warm","coach","playful"][Math.floor(Math.random()*3)] }
+  };
+  const res = await fetch(AI_API_URL, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(payload)
+  });
+  if(!res.ok) throw new Error("API error: "+res.status);
+  const data = await res.json();
+  if(!data || !data.verdict || !data.assistant) throw new Error("Malformed response from API");
+  return data;
+}
 
   function setProgress(){
     const remaining = queue.length + (cur!==null?1:0);
