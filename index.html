@@ -83,4 +83,124 @@
     b.textContent = text;
     chat.appendChild(b); chat.scrollTop = chat.scrollHeight;
   }
-  function shuffle(a){ a=a.slice(); for(le
+  function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+  async function callAI({task,item,user_input,history}){
+    const payload = {
+      system: [
+        "You are a friendly ESL vocabulary coach. Keep replies brief (1–2 sentences).",
+        "Return strict JSON only: {\"assistant\":\"...\",\"verdict\":\"correct|incorrect|unsure\",\"explanation\":\"...\"}.",
+        "Tasks:",
+        "1) \"sentence\": check if the learner used the target word/phrase naturally in one sentence. Allow inflections. If missing/misused, say why briefly and offer a short better example.",
+        "2) \"name\": given a definition, check if their answer exactly matches the target word/phrase (accept minor spacing/hyphen variants if meaning is the same)."
+      ].join("\n"),
+      task, target:item.word, definition:item.toDef || item.def,
+      user_input, history: history.slice(-6)
+    };
+    const res = await fetch(AI_API_URL, {
+      method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error("API error: "+res.status);
+    const data = await res.json();
+    if(!data || !data.verdict || !data.assistant) throw new Error("Malformed response from API");
+    return data;
+  }
+
+  function setProgress(){
+    const remaining = queue.length + (cur!==null?1:0);
+    const completed = Math.max(WORDS.length - remaining, 0);
+    progress.textContent = completed + " / " + WORDS.length;
+    score.textContent = "Correct: " + stats.correct + " • To review: " + wrongQueue.length;
+  }
+  function presentTask(){
+    const item = WORDS[cur];
+    if(task==="sentence"){ bubble("bot",'Use "'+item.word+'" in a natural sentence.'); hint.textContent="Tip: mention the word directly in your sentence."; }
+    else{ bubble("bot",'Which word matches this definition?\n"'+item.def+'"'); hint.textContent="Tip: answer with just the word/phrase."; }
+  }
+  function nextItem(){
+    if(queue.length===0){ endSession(); return; }
+    cur=queue.shift(); task=Math.random()<0.55?"sentence":"name";
+    setProgress(); presentTask();
+  }
+  function endSession(){
+    window.__lastWrong = wrongQueue.slice();
+    app.classList.add("hidden"); results.classList.remove("hidden");
+    $("#summary").textContent = "You answered " + stats.correct + " correctly. " + wrongQueue.length + " queued for more practice.";
+  }
+  function startSession(onlyWrong){
+    results.classList.add("hidden"); app.classList.remove("hidden"); chat.innerHTML="";
+    stats={correct:0,wrong:0}; wrongQueue=[]; history=[];
+    const all = WORDS.map((_,i)=>i);
+    queue = onlyWrong && window.__lastWrong?.length ? window.__lastWrong.slice() : shuffle(all);
+    cur=null; setProgress();
+    bubble("bot","Hi! I'm your coach. Let’s practice these words in a quick chat. Ready?");
+    setTimeout(nextItem,500);
+  }
+  async function onSend(){
+    const text = msg.value.trim(); if(!text) return;
+    msg.value=""; bubble("user",text); history.push({role:"user",content:text});
+    try{
+      const item=WORDS[cur]; if(!item) throw new Error("No current task yet — try again in a moment.");
+      const result=await callAI({task,item,user_input:text,history});
+      bubble("bot",result.assistant); history.push({role:"assistant",content:result.assistant});
+      if(result.verdict==="correct") stats.correct++; else { stats.wrong++; wrongQueue.push(cur); }
+      cur=null; setProgress(); setTimeout(nextItem,800);
+    }catch(e){ console.error(e); bubble("bot","⚠️ "+e.message); }
+  }
+  sendBtn.addEventListener("click", onSend);
+  msg.addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); onSend(); } });
+
+  // ===== Ping API on load so you know AI is reachable =====
+  const apiBadge = document.getElementById("api-status");
+  (async function ping(){
+    try {
+      const r = await fetch(AI_API_URL, { method:"OPTIONS" });
+      if (r.ok) { apiBadge.textContent = "API: OK"; apiBadge.className = "badge ok"; }
+      else { apiBadge.textContent = "API: Reachable (OPTIONS " + r.status + ")"; apiBadge.className = "badge warn"; }
+    } catch {
+      apiBadge.textContent = "API: Unreachable"; apiBadge.className = "badge bad";
+    }
+  })();
+
+  // ===== Go =====
+  startSession(false);
+})();
+</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="app">
+    <div class="header">
+      <h1 class="title">Coach Chat</h1>
+      <div>
+        <span id="api-status" class="badge warn">API: …</span>
+        <span class="progress" id="progress">0 / 15</span>
+      </div>
+    </div>
+
+    <div id="chat" class="chat" aria-live="polite" aria-label="Conversation"></div>
+
+    <div class="footer">
+      <div class="score" id="score">Correct: 0 • To review: 0</div>
+      <div class="hint" id="hint">Tip: answer in one sentence. Use the word naturally.</div>
+    </div>
+
+    <div class="inputbar">
+      <input id="msg" type="text" placeholder="Type your message…" autocomplete="off" />
+      <button id="sendBtn" class="btn">Send</button>
+    </div>
+  </div>
+
+  <div class="card results hidden" id="results">
+    <div class="results">
+      <h2>Session complete 🎉</h2>
+      <p id="summary">You answered X correctly and Y were queued for review.</p>
+      <div class="center" style="margin-top:12px">
+        <button id="reviewWrongBtn" class="btn" onclick="startSession(true)">Practice only the missed ones</button>
+        <button id="restartBtn" class="btn" onclick="startSession(false)">Restart all</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
