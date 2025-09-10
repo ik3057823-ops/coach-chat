@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Coach Chat — Practice & ChatGPT</title>
-  <!-- Markdown + sanitize for safe rendering -->
+  <!-- Markdown render (for ChatGPT mode) -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
   <style>
@@ -85,7 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const AI_API_URL = "https://coach-backend1.vercel.app/api/coach";
 
-  // ===== Word list =====
   const WORDS = [
     { word:"diet", def:"The usual food and drink a person eats; also a controlled eating plan." },
     { word:"junk food", def:"Food high in sugar, salt, or fat and low in nutrients." },
@@ -108,7 +107,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let mode = "practice"; // "practice" | "chatgpt"
   let queue=[], wrongQueue=[], cur=null, task=null, attempts=0;
   const MAX_ATTEMPTS = 2;
-  let stats={correct:0, wrong:0}, history=[]; // shared convo history
+  let stats={correct:0, wrong:0}, history=[]; // shared convo history for both modes
+  let lastUserText = "";
 
   // ===== DOM =====
   const $ = s => document.querySelector(s);
@@ -118,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
         restartBtn=$("#restartBtn"), apiBadge=$("#api-status"),
         modePractice=$("#modePractice"), modeChat=$("#modeChat");
 
-  // errors into chat
+  // errors to chat
   window.addEventListener("error", (e)=>{
     const b=document.createElement("div"); b.className="bubble bot"; b.style.color="#dc2626"; b.style.borderColor="#dc2626";
     b.textContent="Script error: " + (e.message || e.error || "Unknown");
@@ -129,10 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderMarkdown(md){
     try {
       const html = DOMPurify.sanitize(marked.parse(md));
-      const div = document.createElement("div");
-      div.className = "md";
-      div.innerHTML = html;
-      return div;
+      const div = document.createElement("div"); div.className = "md"; div.innerHTML = html; return div;
     } catch { const d=document.createElement("div"); d.textContent = md; return d; }
   }
   function bubble(sender, text, {markdown=false}={}){
@@ -179,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     modeChat.classList.remove("active"); modeChat.setAttribute("aria-pressed","false");
     results.classList.add("hidden"); app.classList.remove("hidden"); chat.innerHTML="";
     hint.textContent = "Practice mode: answer in one sentence. Use the word naturally.";
-    stats={correct:0,wrong:0}; wrongQueue=[]; // keep history shared
+    stats={correct:0,wrong:0}; wrongQueue=[]; // keep shared history
     const all = WORDS.map((_,i)=>i);
     queue = (onlyWrong && window.__lastWrong?.length) ? window.__lastWrong.slice() : shuffle(all);
     cur=null; setProgress();
@@ -197,11 +194,11 @@ document.addEventListener('DOMContentLoaded', () => {
     hint.textContent = "ChatGPT mode: ask anything. Use /practice to switch back.";
     setProgress();
     bubble("bot","You're in ChatGPT mode. Ask me anything, or type **/practice** to go back to exercises.", {markdown:true});
-    cur = 0; task = "name"; // keep a nominal current item for segues if needed
+    cur = 0; task = "name"; // nominal current item for segues if needed
     regenBtn.classList.remove("hidden");
   }
 
-  // ===== Small talk detection used in practice mode =====
+  // ===== Small talk detection (practice mode) =====
   function isSmallTalk(text){
     const t = text.trim().toLowerCase();
     if (!t) return false;
@@ -229,7 +226,14 @@ document.addEventListener('DOMContentLoaded', () => {
     return data;
   }
   async function callGeneral({user_input,history}){
-    const payload = { mode:"general", user_input, history: history.slice(-12) };
+    const payload = {
+      mode: "general",
+      // --- TEMP WORKAROUND for old backend that requires `target` ---
+      target: "_general",
+      // (remove the line above once your backend supports mode:"general")
+      user_input,
+      history: history.slice(-12)
+    };
     const res = await fetch(AI_API_URL, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
     if(!res.ok) throw new Error("API error: "+res.status);
     const data = await res.json();
@@ -238,20 +242,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ===== Send / Regenerate =====
-  let lastUserText = "";
   async function onSend(textOverride=null){
     const text = (textOverride ?? msg.value).trim();
     if(!text) return;
 
     if (mode === "chatgpt" && /^\/practice$/.test(text.toLowerCase())) {
-      startPractice(false);
-      return;
+      startPractice(false); return;
     }
 
     msg.value=""; bubble("user",text); history.push({role:"user",content:text});
     msg.disabled=true; sendBtn.disabled=true;
 
-    // typing indicator
     const typing = document.createElement("div"); typing.className="bubble bot"; typing.textContent="…";
     chat.appendChild(typing); chat.scrollTop = chat.scrollHeight;
 
@@ -263,7 +264,6 @@ document.addEventListener('DOMContentLoaded', () => {
         history.push({role:"assistant", content:result.assistant});
         lastUserText = text;
       } else {
-        // practice
         const item=WORDS[cur]; if(!item) throw new Error("No current task yet — try again in a moment.");
         let result;
         if (isSmallTalk(text)) {
@@ -272,7 +272,6 @@ document.addEventListener('DOMContentLoaded', () => {
           bubble("bot", result.assistant);
           history.push({ role:"assistant", content:result.assistant });
         } else {
-          // allow quick skip
           const skip = /^(skip|pass|give up|idk|i don'?t know)$/i.test(text);
           if (skip) attempts = MAX_ATTEMPTS;
           result = await callEval({ task, item, user_input:text, history });
@@ -284,9 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
             stats.correct++; cur=null; setProgress(); setTimeout(nextItem,600);
           } else {
             attempts++;
-            if (attempts < MAX_ATTEMPTS && !skip) {
-              setProgress(); // retry same item
-            } else {
+            if (attempts < MAX_ATTEMPTS && !skip) { setProgress(); }
+            else {
               stats.wrong++; wrongQueue.push(cur);
               bubble("bot","Let’s park this and try another. We’ll circle back later.");
               cur=null; setProgress(); setTimeout(nextItem,600);
