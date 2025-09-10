@@ -3,22 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Coach Chat — Practice & ChatGPT</title>
-  <!-- Markdown render (for ChatGPT mode) -->
+  <title>Coach Chat — Unified</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
   <style>
-    :root{ --bg:#fff; --ink:#111827; --ink-dim:#6b7280; --brand:#2563eb; --soft:#f3f4f6; --soft-2:#e5e7eb; --radius:16px; --ok:#16a34a; --bad:#dc2626; }
+    :root{ --bg:#fff; --ink:#111827; --ink-dim:#6b7280; --brand:#2563eb; --soft:#f3f4f6; --soft-2:#e5e7eb; --radius:16px; --ok:#16a34a; --bad:#dc2626; --pill:#0ea5e9;}
     *{box-sizing:border-box}
     html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Inter,Arial,sans-serif}
     .wrap{max-width:880px;margin:0 auto;padding:16px}
     .card{background:#fff;border:1px solid var(--soft-2);border-radius:var(--radius);box-shadow:0 6px 24px rgba(0,0,0,.05);overflow:hidden}
     .header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--soft-2)}
-    .title{margin:0;font-weight:800;font-size:28px}
-    .right{display:flex;gap:10px;align-items:center}
-    .seg{display:inline-flex;border:1px solid var(--soft-2);border-radius:999px;overflow:hidden}
-    .seg button{padding:6px 10px;border:0;background:#fff;color:#111827;font-weight:600;cursor:pointer}
-    .seg button.active{background:var(--brand);color:#fff}
+    .title{margin:0;font-weight:800;font-size:28px;display:flex;gap:10px;align-items:center}
+    .pill{font-size:12px;background:var(--pill);color:#fff;border-radius:999px;padding:2px 8px}
     .badge{font-size:12px;border-radius:999px;padding:2px 8px;color:#fff}
     .ok{background:var(--ok)} .bad{background:var(--bad)} .warn{background:#f59e0b}
     .progress{font-size:14px;color:var(--ink-dim)}
@@ -32,22 +28,15 @@
     .inputbar{display:flex;gap:10px;padding:12px;border-top:1px solid var(--soft-2);background:#fff}
     .inputbar input{flex:1;padding:12px 14px;border-radius:12px;border:1px solid var(--soft-2);font-size:15px}
     .btn{appearance:none;border:1px solid var(--soft-2);background:var(--brand);color:#fff;padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600}
-    .btn.secondary{background:#6b7280;border-color:#6b7280}
-    .results{padding:28px;text-align:center}
-    .hidden{display:none}
     @media (max-width:560px){ .chat{height:58vh} .bubble{max-width:86%} .title{font-size:22px} }
   </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="card" id="app">
+  <div class="card">
     <div class="header">
-      <h1 class="title">Coach Chat</h1>
-      <div class="right">
-        <div class="seg" id="modeSeg">
-          <button id="modePractice" class="active" aria-pressed="true">Practice</button>
-          <button id="modeChat">ChatGPT</button>
-        </div>
+      <h1 class="title">Coach Chat <span id="practicePill" class="pill">Practice: ON</span></h1>
+      <div style="display:flex;align-items:center;gap:8px">
         <span id="api-status" class="badge warn">API: …</span>
         <span class="progress" id="progress">0 / 15</span>
       </div>
@@ -57,24 +46,12 @@
 
     <div class="footer">
       <div class="score" id="score">Correct: 0 • To review: 0</div>
-      <div class="hint" id="hint">Practice mode: answer in one sentence. Use the word naturally.</div>
+      <div class="hint" id="hint">Tip: answer in one sentence. Use the word naturally. Type /help for commands.</div>
     </div>
 
     <div class="inputbar">
       <input id="msg" type="text" placeholder="Type your message…" autocomplete="off" />
-      <button id="regenBtn" class="btn secondary hidden" title="Regenerate last answer">Regenerate</button>
       <button id="sendBtn" class="btn">Send</button>
-    </div>
-  </div>
-
-  <div class="card results hidden" id="results">
-    <div class="results">
-      <h2>Session complete 🎉</h2>
-      <p id="summary">You answered X correctly. Y queued for more practice.</p>
-      <div style="display:flex;gap:12px;justify-content:center;margin-top:12px">
-        <button id="reviewWrongBtn" class="btn secondary">Practice missed ones</button>
-        <button id="restartBtn" class="btn">Restart all</button>
-      </div>
     </div>
   </div>
 </div>
@@ -85,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const AI_API_URL = "https://coach-backend1.vercel.app/api/coach";
 
+  /* ---- Words ---- */
   const WORDS = [
     { word:"diet", def:"The usual food and drink a person eats; also a controlled eating plan." },
     { word:"junk food", def:"Food high in sugar, salt, or fat and low in nutrients." },
@@ -103,227 +81,161 @@ document.addEventListener('DOMContentLoaded', () => {
     { word:"digest", def:"To break down food in the body so it can be absorbed and used." }
   ];
 
-  // ===== State =====
-  let mode = "practice"; // "practice" | "chatgpt"
+  /* ---- State ---- */
+  let practiceOn = true;
   let queue=[], wrongQueue=[], cur=null, task=null, attempts=0;
   const MAX_ATTEMPTS = 2;
-  let stats={correct:0, wrong:0}, history=[]; // shared convo history for both modes
-  let lastUserText = "";
+  let stats={correct:0, wrong:0}, history=[];
 
-  // ===== DOM =====
+  /* ---- DOM ---- */
   const $ = s => document.querySelector(s);
   const chat = $("#chat"), msg=$("#msg"), progress=$("#progress"), score=$("#score"),
-        hint=$("#hint"), sendBtn=$("#sendBtn"), regenBtn=$("#regenBtn"),
-        app=$("#app"), results=$("#results"), reviewWrongBtn=$("#reviewWrongBtn"),
-        restartBtn=$("#restartBtn"), apiBadge=$("#api-status"),
-        modePractice=$("#modePractice"), modeChat=$("#modeChat");
+        hint=$("#hint"), sendBtn=$("#sendBtn"), practicePill=$("#practicePill"),
+        apiBadge=$("#api-status");
 
-  // errors to chat
   window.addEventListener("error", (e)=>{
-    const b=document.createElement("div"); b.className="bubble bot"; b.style.color="#dc2626"; b.style.borderColor="#dc2626";
+    const b=document.createElement("div"); b.className="bubble bot";
+    b.style.color="#dc2626"; b.style.borderColor="#dc2626";
     b.textContent="Script error: " + (e.message || e.error || "Unknown");
     chat.appendChild(b);
   });
 
-  // ===== UI helpers =====
   function renderMarkdown(md){
-    try {
-      const html = DOMPurify.sanitize(marked.parse(md));
-      const div = document.createElement("div"); div.className = "md"; div.innerHTML = html; return div;
-    } catch { const d=document.createElement("div"); d.textContent = md; return d; }
+    try { const html = DOMPurify.sanitize(marked.parse(md));
+      const div=document.createElement("div"); div.className="md"; div.innerHTML=html; return div;
+    } catch { const d=document.createElement("div"); d.textContent=md; return d; }
   }
   function bubble(sender, text, {markdown=false}={}){
-    const b=document.createElement("div");
-    b.className="bubble " + (sender==="bot"?"bot":"user");
-    if (markdown && sender==="bot") b.appendChild(renderMarkdown(text));
-    else b.textContent = text;
-    chat.appendChild(b); chat.scrollTop=chat.scrollHeight;
-    return b;
+    const b=document.createElement("div"); b.className="bubble "+(sender==="bot"?"bot":"user");
+    if(markdown && sender==="bot") b.appendChild(renderMarkdown(text)); else b.textContent=text;
+    chat.appendChild(b); chat.scrollTop=chat.scrollHeight; return b;
   }
   function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 
   function setProgress(){
-    if (mode === "chatgpt") {
-      progress.textContent = "ChatGPT";
-      score.textContent = "General chat";
-      return;
-    }
+    if(!practiceOn){ progress.textContent="ChatGPT"; score.textContent="General chat"; return; }
     const remaining = queue.length + (cur!==null?1:0);
     const completed = Math.max(WORDS.length - remaining, 0);
     progress.textContent = completed + " / " + WORDS.length;
     score.textContent = "Correct: " + stats.correct + " • To review: " + wrongQueue.length;
   }
 
-  // ===== Practice flow =====
   function presentTask(){
     const item=WORDS[cur];
-    if(task==="sentence"){ bubble("bot",'Use "'+item.word+'" in a natural sentence.'); hint.textContent="Practice: mention the word directly in your sentence."; }
-    else{ bubble("bot",'Which word matches this definition?\n"'+item.def+'"'); hint.textContent="Practice: answer with just the word/phrase."; }
+    if(task==="sentence"){ bubble("bot",'Use "'+item.word+'" in a natural sentence.'); hint.textContent="Tip: mention the word directly in your sentence."; }
+    else{ bubble("bot",'Which word matches this definition?\n"'+item.def+'"'); hint.textContent="Tip: answer with just the word/phrase."; }
   }
   function nextItem(){
+    if(!practiceOn){ return; }
     if(queue.length===0){ endSession(); return; }
     cur=queue.shift(); task=Math.random()<0.55?"sentence":"name"; attempts=0;
     setProgress(); presentTask();
   }
   function endSession(){
-    window.__lastWrong = wrongQueue.slice();
-    app.classList.add("hidden"); results.classList.remove("hidden");
-    $("#summary").textContent = "You answered " + stats.correct + " correctly. " + wrongQueue.length + " queued for more practice.";
+    practiceOn=false; practicePill.textContent="Practice: OFF";
+    bubble("bot", `Session complete 🎉 You answered ${stats.correct}/${WORDS.length} correctly. Type /review to practice missed ones or /restart to start over.`);
+    setProgress();
   }
   function startPractice(onlyWrong=false){
-    mode = "practice";
-    modePractice.classList.add("active"); modePractice.setAttribute("aria-pressed","true");
-    modeChat.classList.remove("active"); modeChat.setAttribute("aria-pressed","false");
-    results.classList.add("hidden"); app.classList.remove("hidden"); chat.innerHTML="";
-    hint.textContent = "Practice mode: answer in one sentence. Use the word naturally.";
-    stats={correct:0,wrong:0}; wrongQueue=[]; // keep shared history
-    const all = WORDS.map((_,i)=>i);
+    practiceOn=true; practicePill.textContent="Practice: ON";
+    stats={correct:0, wrong:0}; wrongQueue=[]; // keep chat history
+    const all=WORDS.map((_,i)=>i);
     queue = (onlyWrong && window.__lastWrong?.length) ? window.__lastWrong.slice() : shuffle(all);
     cur=null; setProgress();
-    bubble("bot","Hi! I'm your coach. Let’s practice these words in a quick chat. Ready?");
-    setTimeout(nextItem,500);
-    regenBtn.classList.add("hidden");
+    bubble("bot","Let’s practice! Ready?");
+    setTimeout(nextItem, 400);
   }
 
-  // ===== ChatGPT flow =====
-  function startChat(){
-    mode = "chatgpt";
-    modeChat.classList.add("active"); modeChat.setAttribute("aria-pressed","true");
-    modePractice.classList.remove("active"); modePractice.setAttribute("aria-pressed","false");
-    app.classList.remove("hidden"); results.classList.add("hidden"); chat.innerHTML="";
-    hint.textContent = "ChatGPT mode: ask anything. Use /practice to switch back.";
-    setProgress();
-    bubble("bot","You're in ChatGPT mode. Ask me anything, or type **/practice** to go back to exercises.", {markdown:true});
-    cur = 0; task = "name"; // nominal current item for segues if needed
-    regenBtn.classList.remove("hidden");
+  function isCommand(t){
+    return /^\/(practice|stop|status|review|restart|help)\b/i.test(t.trim());
+  }
+  function runCommand(cmd){
+    const t = cmd.trim().toLowerCase();
+    if(t==="/practice"||t==="/practice on"){ if(!practiceOn){ bubble("bot","Practice resumed."); } startPractice(false); return true; }
+    if(t==="/stop"||t==="/practice off"){ practiceOn=false; practicePill.textContent="Practice: OFF"; bubble("bot","Practice paused. Ask me anything."); setProgress(); return true; }
+    if(t==="/status"){ bubble("bot", practiceOn ? `Practice ON — Correct: ${stats.correct}, To review: ${wrongQueue.length}. Progress: ${progress.textContent}.` : "Practice OFF — Chat freely. Type /practice to resume."); return true; }
+    if(t==="/review"){ window.__lastWrong = wrongQueue.slice(); if(!window.__lastWrong.length){ bubble("bot","No missed items yet. Type /restart to practice all."); } else { bubble("bot","Starting review of missed items."); startPractice(true); } return true; }
+    if(t==="/restart"){ bubble("bot","Restarting the full set."); startPractice(false); return true; }
+    if(t==="/help"){ bubble("bot", "Commands: /practice, /stop, /status, /review, /restart, /help"); return true; }
+    return false;
   }
 
-  // ===== Small talk detection (practice mode) =====
   function isSmallTalk(text){
-    const t = text.trim().toLowerCase();
-    if (!t) return false;
-    if (/^\/practice$/.test(t)) return false;
+    const t=text.trim().toLowerCase();
+    if (!t || isCommand(t)) return false;
     if (/^(hi|hello|hey|yo|how (are|r) you|who are you|can you chat|talk to me|what can you do|ok|okay|cool|thanks?|thank you)$/.test(t)) return true;
     if (t.endsWith("?") && t.split(/\s+/).length <= 8) return true;
     return false;
   }
 
-  // ===== API calls =====
+  /* ---- API calls ---- */
+  async function callGeneral({user_input,history}){
+    const payload = { mode:"general", user_input, history: history.slice(-12) };
+    const res = await fetch(AI_API_URL, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
+    if(!res.ok) throw new Error("API error: "+res.status);
+    const data = await res.json(); if(!data || !data.assistant) throw new Error("Malformed response from API"); return data;
+  }
   async function callEval({task,item,user_input,history}){
     const payload = { mode:"eval", task, target:item.word, definition:item.def, alternatives:item.alt||[], user_input, history:history.slice(-6) };
     const res = await fetch(AI_API_URL, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
     if(!res.ok) throw new Error("API error: "+res.status);
-    const data = await res.json();
-    if(!data || !data.verdict || !data.assistant) throw new Error("Malformed response from API");
-    return data;
+    const data = await res.json(); if(!data || !data.verdict || !data.assistant) throw new Error("Malformed response from API"); return data;
   }
   async function callChatCoach({task,item,user_input,history}){
     const payload = { mode:"chat", task, target:item.word, definition:item.def, alternatives:item.alt||[], user_input, history:history.slice(-6) };
     const res = await fetch(AI_API_URL, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
     if(!res.ok) throw new Error("API error: "+res.status);
-    const data = await res.json();
-    if(!data || !data.assistant) throw new Error("Malformed response from API");
-    return data;
-  }
-  async function callGeneral({user_input,history}){
-    const payload = {
-      mode: "general",
-      // --- TEMP WORKAROUND for old backend that requires `target` ---
-      target: "_general",
-      // (remove the line above once your backend supports mode:"general")
-      user_input,
-      history: history.slice(-12)
-    };
-    const res = await fetch(AI_API_URL, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) });
-    if(!res.ok) throw new Error("API error: "+res.status);
-    const data = await res.json();
-    if(!data || !data.assistant) throw new Error("Malformed response from API");
-    return data;
+    const data = await res.json(); if(!data || !data.assistant) throw new Error("Malformed response from API"); return data;
   }
 
-  // ===== Send / Regenerate =====
-  async function onSend(textOverride=null){
-    const text = (textOverride ?? msg.value).trim();
-    if(!text) return;
-
-    if (mode === "chatgpt" && /^\/practice$/.test(text.toLowerCase())) {
-      startPractice(false); return;
-    }
-
+  /* ---- Send ---- */
+  async function onSend(){
+    const text = msg.value.trim(); if(!text) return;
     msg.value=""; bubble("user",text); history.push({role:"user",content:text});
-    msg.disabled=true; sendBtn.disabled=true;
+    if (isCommand(text)){ runCommand(text); return; }
 
-    const typing = document.createElement("div"); typing.className="bubble bot"; typing.textContent="…";
-    chat.appendChild(typing); chat.scrollTop = chat.scrollHeight;
+    msg.disabled=true; sendBtn.disabled=true;
+    const typing=document.createElement("div"); typing.className="bubble bot"; typing.textContent="…";
+    chat.appendChild(typing); chat.scrollTop=chat.scrollHeight;
 
     try{
-      if (mode === "chatgpt") {
-        const result = await callGeneral({ user_input:text, history });
-        typing.remove();
-        bubble("bot", result.assistant, { markdown:true });
-        history.push({role:"assistant", content:result.assistant});
-        lastUserText = text;
+      if (!practiceOn || cur===null){
+        // General ChatGPT
+        const res = await callGeneral({ user_input:text, history });
+        typing.remove(); bubble("bot", res.assistant, {markdown:true}); history.push({role:"assistant",content:res.assistant});
       } else {
-        const item=WORDS[cur]; if(!item) throw new Error("No current task yet — try again in a moment.");
+        // Practice active
+        const item=WORDS[cur];
         let result;
         if (isSmallTalk(text)) {
           result = await callChatCoach({ task, item, user_input:text, history });
-          typing.remove();
-          bubble("bot", result.assistant);
-          history.push({ role:"assistant", content:result.assistant });
+          typing.remove(); bubble("bot", result.assistant); history.push({ role:"assistant", content:result.assistant });
         } else {
           const skip = /^(skip|pass|give up|idk|i don'?t know)$/i.test(text);
           if (skip) attempts = MAX_ATTEMPTS;
           result = await callEval({ task, item, user_input:text, history });
-          typing.remove();
-          bubble("bot", result.assistant);
-          history.push({ role:"assistant", content:result.assistant });
-
-          if (result.verdict === "correct") {
-            stats.correct++; cur=null; setProgress(); setTimeout(nextItem,600);
-          } else {
-            attempts++;
-            if (attempts < MAX_ATTEMPTS && !skip) { setProgress(); }
-            else {
-              stats.wrong++; wrongQueue.push(cur);
-              bubble("bot","Let’s park this and try another. We’ll circle back later.");
-              cur=null; setProgress(); setTimeout(nextItem,600);
-            }
-          }
+          typing.remove(); bubble("bot", result.assistant); history.push({role:"assistant", content:result.assistant});
+          if (result.verdict === "correct"){ stats.correct++; cur=null; setProgress(); setTimeout(nextItem,600); }
+          else { attempts++; if(attempts<MAX_ATTEMPTS && !skip){ setProgress(); } else { stats.wrong++; wrongQueue.push(cur); cur=null; bubble("bot","We’ll circle back later. Next one…"); setProgress(); setTimeout(nextItem,600); } }
         }
       }
     } catch(e){
-      typing.remove(); console.error(e);
-      bubble("bot","⚠️ "+e.message);
+      typing.remove(); console.error(e); bubble("bot","⚠️ "+e.message);
     } finally {
       msg.disabled=false; sendBtn.disabled=false; msg.focus();
     }
   }
 
-  async function onRegenerate(){
-    if (mode !== "chatgpt" || !lastUserText) return;
-    await onSend(lastUserText);
-  }
-
-  // ===== Wire up =====
-  sendBtn.addEventListener("click", ()=> onSend());
-  regenBtn.addEventListener("click", onRegenerate);
+  /* ---- Wire up ---- */
+  sendBtn.addEventListener("click", onSend);
   msg.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); onSend(); } });
-  reviewWrongBtn.addEventListener("click", ()=> startPractice(true));
-  restartBtn.addEventListener("click", ()=> startPractice(false));
-  modePractice.addEventListener("click", ()=> startPractice(false));
-  modeChat.addEventListener("click", ()=> startChat());
 
   // API badge
-  (async function ping(){
-    try { const r = await fetch(AI_API_URL, { method:"OPTIONS" });
-      if (r.ok) { apiBadge.textContent = "API: OK"; apiBadge.className = "badge ok"; }
-      else { apiBadge.textContent = "API: "+r.status; apiBadge.className = "badge warn"; }
-    } catch { apiBadge.textContent = "API: offline"; apiBadge.className = "badge bad"; }
-  })();
+  (async function ping(){ try{ const r=await fetch(AI_API_URL,{method:"OPTIONS"}); if(r.ok){ apiBadge.textContent="API: OK"; apiBadge.className="badge ok"; } else { apiBadge.textContent="API: "+r.status; apiBadge.className="badge warn"; } } catch { apiBadge.textContent="API: offline"; apiBadge.className="badge bad"; } })();
 
-  // Go!
-  startPractice(false);
+  // Start practice immediately
+  function bootstrap(){ const all=WORDS.map((_,i)=>i); queue=shuffle(all); cur=null; stats={correct:0,wrong:0}; wrongQueue=[]; practiceOn=true; practicePill.textContent="Practice: ON"; setProgress(); bubble("bot","Hi! I’m your coach. We can chat or practice in this one conversation. Type /help for commands."); setTimeout(nextItem,600); }
+  bootstrap();
 });
 </script>
 </body>
