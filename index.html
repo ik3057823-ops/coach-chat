@@ -81,32 +81,27 @@ document.addEventListener('DOMContentLoaded', () => {
     { word:"organic", def:"Grown or made without most synthetic pesticides or fertilizers." },
     { word:"nutritious", def:"Nourishing; provides useful nutrients like vitamins and minerals." },
     { word:"consume", def:"To eat or drink; also to use up." },
-    { word:"tempted", def:"Feeling a strong desire to do something you maybe shouldn't.", base:"tempt" },
+    { word:"tempted", def:"Feeling a strong desire to do something you maybe shouldn't.", alt:["tempt"] },
     { word:"reduce", def:"To make smaller or less in amount, size, or number." },
     { word:"sample", def:"To try a small amount to test taste or quality." },
     { word:"digest", def:"To break down food in the body so it can be absorbed and used." }
   ];
 
-  let queue=[], wrongQueue=[], cur=null, task=null;
+  // ---- State ----
+  let queue=[], wrongQueue=[], cur=null, task=null, attempts=0;
+  const MAX_ATTEMPTS = 2;
   let stats={correct:0, wrong:0}, history=[];
 
+  // ---- DOM ----
   const $ = s => document.querySelector(s);
-  const chat = $("#chat");
-  const msg  = $("#msg");
-  const progress = $("#progress");
-  const score = $("#score");
-  const hint = $("#hint");
-  const sendBtn = $("#sendBtn");
-  const app = $("#app");
-  const results = $("#results");
-  const reviewWrongBtn = $("#reviewWrongBtn");
-  const restartBtn = $("#restartBtn");
-  const apiBadge = $("#api-status");
+  const chat = $("#chat"), msg=$("#msg"), progress=$("#progress"), score=$("#score"), hint=$("#hint"),
+        sendBtn=$("#sendBtn"), app=$("#app"), results=$("#results"),
+        reviewWrongBtn=$("#reviewWrongBtn"), restartBtn=$("#restartBtn"),
+        apiBadge=$("#api-status");
 
   window.addEventListener("error", (e) => {
     const b=document.createElement("div");
-    b.className="bubble bot";
-    b.style.color="#dc2626"; b.style.borderColor="#dc2626";
+    b.className="bubble bot"; b.style.color="#dc2626"; b.style.borderColor="#dc2626";
     b.textContent="Script error: " + (e.message || e.error || "Unknown");
     chat.appendChild(b);
   });
@@ -117,19 +112,21 @@ document.addEventListener('DOMContentLoaded', () => {
     b.textContent=text;
     chat.appendChild(b); chat.scrollTop=chat.scrollHeight;
   }
-  function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+  function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 
   async function callAI({task,item,user_input,history}){
     const payload = {
       system: [
-        "You are a friendly ESL vocabulary coach. Keep replies brief (1–2 sentences).",
+        "You are a friendly ESL vocabulary coach. Be concise and supportive.",
         "Return strict JSON only: {\"assistant\":\"...\",\"verdict\":\"correct|incorrect|unsure\",\"explanation\":\"...\"}.",
-        "Tasks:",
-        "1) \"sentence\": check if the learner used the target word/phrase naturally in one sentence. Allow inflections. If missing/misused, say why briefly and offer a short better example.",
-        "2) \"name\": given a definition, check if their answer exactly matches the target word/phrase (accept minor spacing/hyphen variants if meaning is the same)."
+        "If incorrect/unsure: give one small hint and end with a short follow-up question inviting another try."
       ].join("\n"),
-      task, target:item.word, definition:item.def,
-      user_input, history: history.slice(-6)
+      task,
+      target: item.word,
+      definition: item.def,
+      alternatives: item.alt || [],
+      user_input,
+      history: history.slice(-6)
     };
     const res = await fetch(AI_API_URL, {
       method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload)
@@ -147,13 +144,13 @@ document.addEventListener('DOMContentLoaded', () => {
     score.textContent = "Correct: " + stats.correct + " • To review: " + wrongQueue.length;
   }
   function presentTask(){
-    const item = WORDS[cur];
+    const item=WORDS[cur];
     if(task==="sentence"){ bubble("bot",'Use "'+item.word+'" in a natural sentence.'); hint.textContent="Tip: mention the word directly in your sentence."; }
-    else{ bubble("bot",'Which word matches this definition?\n"'+item.def+'"'); hint.textContent="Tip: answer with just the word/phrase."; }
+    else{ bubble("bot",'Let’s try this one — which word matches the definition?\n"'+item.def+'"'); hint.textContent="Tip: answer with just the word/phrase."; }
   }
   function nextItem(){
     if(queue.length===0){ endSession(); return; }
-    cur=queue.shift(); task=Math.random()<0.55?"sentence":"name";
+    cur=queue.shift(); task=Math.random()<0.55?"sentence":"name"; attempts=0;
     setProgress(); presentTask();
   }
   function endSession(){
@@ -172,15 +169,50 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function onSend(){
-    const text = msg.value.trim(); if(!text) return;
+    const text = msg.value.trim();
+    if(!text) return;
+
+    // quick “skip”
+    const skip = /^(skip|pass|give up|idk|i don'?t know)$/i.test(text);
+
     msg.value=""; bubble("user",text); history.push({role:"user",content:text});
+    msg.disabled = true; sendBtn.disabled = true;
+
+    // typing indicator
+    const typing = document.createElement("div");
+    typing.className = "bubble bot"; typing.textContent = "…";
+    chat.appendChild(typing); chat.scrollTop = chat.scrollHeight;
+
     try{
       const item=WORDS[cur]; if(!item) throw new Error("No current task yet — try again in a moment.");
-      const result=await callAI({task,item,user_input:text,history});
-      bubble("bot",result.assistant); history.push({role:"assistant",content:result.assistant});
-      if(result.verdict==="correct") stats.correct++; else { stats.wrong++; wrongQueue.push(cur); }
-      cur=null; setProgress(); setTimeout(nextItem,800);
-    }catch(e){ console.error(e); bubble("bot","⚠️ "+e.message); }
+      const result = skip
+        ? { assistant:"No worries — we’ll circle back to this one.", verdict:"incorrect", explanation:"" }
+        : await callAI({task,item,user_input:text,history});
+
+      typing.remove();
+      bubble("bot",result.assistant);
+      history.push({role:"assistant",content:result.assistant});
+
+      if(result.verdict==="correct"){
+        stats.correct++; cur=null; setProgress(); setTimeout(nextItem,600);
+      } else {
+        attempts++;
+        if (attempts < MAX_ATTEMPTS && !skip) {
+          // stay on the same item; let the learner try again
+          setProgress();
+        } else {
+          stats.wrong++; wrongQueue.push(cur);
+          bubble("bot","Let’s park this and try another. We’ll come back later.");
+          cur=null; setProgress(); setTimeout(nextItem,600);
+        }
+      }
+
+    } catch(e){
+      typing.remove();
+      console.error(e); bubble("bot","⚠️ "+e.message);
+    } finally {
+      msg.disabled = false; sendBtn.disabled = false; msg.focus();
+    }
   }
 
   sendBtn.addEventListener("click", onSend);
@@ -188,18 +220,15 @@ document.addEventListener('DOMContentLoaded', () => {
   reviewWrongBtn.addEventListener("click", ()=> startSession(true));
   restartBtn.addEventListener("click", ()=> startSession(false));
 
-  // API status badge
+  // API badge
   (async function ping(){
-    try {
-      const r = await fetch(AI_API_URL, { method:"OPTIONS" });
+    try { const r = await fetch(AI_API_URL, { method:"OPTIONS" });
       if (r.ok) { apiBadge.textContent = "API: OK"; apiBadge.className = "badge ok"; }
       else { apiBadge.textContent = "API: "+r.status; apiBadge.className = "badge warn"; }
-    } catch {
-      apiBadge.textContent = "API: offline"; apiBadge.className = "badge bad";
-    }
+    } catch { apiBadge.textContent = "API: offline"; apiBadge.className = "badge bad"; }
   })();
 
-  // Go!
+  // GO
   startSession();
 });
 </script>
